@@ -1,0 +1,276 @@
+float * Compute2x2GradientMatrix(ImgFloat &conv_out_gx ,ImgFloat &conv_out_gy ,float x, float y,int n)
+{
+	float Zb[3]={0.0};
+	float gxx=0.0;
+	float gxy=0.0;
+	float gyy=0.0;
+
+	for(int j=-int(n/2);j<=int(n/2);j++)
+	{	
+		for(int i=-int(n/2);i<=int(n/2);i++)
+		{
+			
+			if((x+i)<0 || (y+j)<0)
+			{
+				gxx=0.0;
+				gxy=0.0;
+				gyy=0.0;
+			}
+			else if((x+i)>=0 && (x+i)<=(conv_out_gx.Width()-1) && (y+j)<=(conv_out_gx.Height()-1) && (y+j)>=0)
+			{
+				gxx=gxx+conv_out_gx(x+i,y+j)*conv_out_gx(x+i,y+j);
+				gxy=gxy+conv_out_gx(x+i,y+j)*conv_out_gy(x+i,y+j);
+				gyy=gyy+conv_out_gy(x+i,y+j)*conv_out_gy(x+i,y+j);
+			}
+			else if((x+i)>(conv_out_gx.Width()-1) || (y+j)>(conv_out_gx.Height()-1))
+			{
+				gxx=gxx;
+				gxy=gxy;
+				gyy=gyy;
+			}
+		}
+	}
+	Zb[0]=gxx;
+	Zb[1]=gxy;
+	Zb[2]=gyy;
+	
+
+	return Zb;
+}
+
+
+
+//calculate depth
+ImgFloat DetectGoodFeatures(ImgGray &img1,int thresval)
+{
+		float sigmad=1;
+		//std::cout<<"sigma="<<sigmad<<endl;
+
+		int mud=2/*floor(5*sigmad/2)*/;
+		int wd=2*mud+1;
+
+		float g[20]={0};
+		gaussiank(mud, sigmad, wd, g);
+
+		float g_d[20]={0};
+		gaussiandk(mud,sigmad,wd,g_d);
+
+		ImgFloat conv_temp_gx;
+		conv_temp_gx.Reset(img1.Width(),img1.Height());
+		Set(&conv_temp_gx,0);
+
+		ImgFloat conv_out_gx;
+		conv_out_gx.Reset(img1.Width(),img1.Height());
+		Set(&conv_out_gx,0);
+
+		
+
+		Gx(mud,wd,img1,g,g_d,conv_temp_gx,conv_out_gx);
+
+		Figure fig2("gx",400,10,true,false); //display original image
+		fig2.Draw(conv_out_gx);
+
+		ImgFloat conv_temp_gy;
+		conv_temp_gy.Reset(img1.Width(),img1.Height());
+		Set(&conv_temp_gy,0);
+
+		ImgFloat conv_out_gy;
+		conv_out_gy.Reset(img1.Width(),img1.Height());
+		Set(&conv_out_gy,0);
+
+		Gy(mud,wd,img1,g,g_d,conv_temp_gy,conv_out_gy);
+
+		Figure fig3("gy",800,10,true,false); //display original image
+		fig3.Draw(conv_out_gy);
+
+		ImgFloat covar;
+		covar.Reset(img1.Width(),img1.Height());
+		Set(&covar,0);
+
+
+		//calculate Z
+		float lam1=0;
+		float lam2=0;
+
+		float n=3;
+		
+		float gxx=0;
+		float gyy=0;
+		float gxy=0;
+
+		//gradient matrix
+		
+
+
+		for(float y=0;y<img1.Height();y++)
+		{	
+			for(float x=0;x<img1.Width();x++)
+			{
+				
+				float *Z;
+				Z=Compute2x2GradientMatrix(conv_out_gx ,conv_out_gy,x,y,n);
+				gxx=Z[0];
+				gxy=Z[1];
+				gyy=Z[2];
+
+				
+
+				lam1=(gxx+gyy+sqrt(pow((gxx-gyy),2)+4*gxy*gxy))/2;
+				lam2=(gxx+gyy-sqrt(pow((gxx-gyy),2)+4*gxy*gxy))/2;
+				
+				float temp/*covar(x,y)*/=MIN(lam1,lam2);
+				if(temp>float(thresval))
+				{
+					covar(x,y)=temp;
+				}
+				else
+				{
+					covar(x,y)=0.0;
+				}
+				//cout<<covar(x,y)<<endl;
+			}
+			
+		}
+		
+		//calculate cornerness
+		for(float y=0;y<(img1.Height());y++)
+		{	
+			for(float x=0;x<img1.Width();x++)
+			{
+				for(int i=0;i<10;i++)
+				{
+					if((x-i)<0 || (y-i)<0 || (x+i)>(img1.Width()-1)|| (y+i)>(img1.Height()-1))
+					{
+						covar(x,y)=covar(x,y);
+					}
+					else if(covar(x,y)<covar(x+i,y) || covar(x,y)<covar(x-i,y) )
+					{
+						covar(x,y)=0.0;
+					}
+					else if(covar(x,y)<covar(x-i,y-i) || covar(x,y)<covar(x+i,y+i))
+					{
+						covar(x,y)=0.0;
+					}
+					else if(covar(x,y)<covar(x,y+i) || covar(x,y)<covar(x,y-i))
+					{
+						covar(x,y)=0.0;
+					}
+					else if(covar(x,y)<covar(x-i,y+i) || covar(x,y)<covar(x+i,y-i))
+					{
+						covar(x,y)=0.0;
+					}
+				}
+			}
+		}
+		return covar;
+}
+
+
+//lucas kanade
+float *LucasKanade(ImgGray &img1,ImgGray &img2,float x,float y,int n)
+{
+	float u=0;
+	float v=0;
+	int maxiter=20;
+
+	float ex=0;
+	float ey=0;
+	int count=0;
+
+	float sigmad=1;
+	//std::cout<<"sigma="<<sigmad<<endl;
+
+	int mud=2/*floor(5*sigmad/2)*/;
+	int wd=2*mud+1;
+
+	float g[20]={0};
+	gaussiank(mud, sigmad, wd, g);
+
+	float g_d[20]={0};
+	gaussiandk(mud,sigmad,wd,g_d);
+
+
+	ImgFloat conv_temp_gx;
+	conv_temp_gx.Reset(img1.Width(),img1.Height());
+	Set(&conv_temp_gx,0);
+
+	ImgFloat conv_out_gx;
+	conv_out_gx.Reset(img1.Width(),img1.Height());
+	Set(&conv_out_gx,0);
+
+	Gx(mud,wd,img1,g,g_d,conv_temp_gx,conv_out_gx);
+
+
+	ImgFloat conv_temp_gy;
+	conv_temp_gy.Reset(img1.Width(),img1.Height());
+	Set(&conv_temp_gy,0);
+
+	ImgFloat conv_out_gy;
+	conv_out_gy.Reset(img1.Width(),img1.Height());
+	Set(&conv_out_gy,0);
+
+	Gy(mud,wd,img1,g,g_d,conv_temp_gy,conv_out_gy);
+
+	float *Z;
+	Z=Compute2x2GradientMatrix(conv_out_gx ,conv_out_gy,x,y,n);
+	float gxx=Z[0];
+	float gxy=Z[1];
+	float gyy=Z[2];
+	//std::cout<<gxx;
+
+	float U[2]={0};
+
+	for(int iter=0;iter<maxiter;iter++)
+	{
+		ex=0;
+		ey=0;
+
+		for(int j=-int(n/2);j<=int(n/2);j++)
+		{	
+			for(int i=-int(n/2);i<=int(n/2);i++)
+			{
+				if((x+i)<0 || (y+j)<0)
+				{
+					if((x+i+u)<0 || (y+j+v)<0)
+					{
+						ex=0; 
+						ey=0; 
+					}
+
+				}
+				else if((x+i)>=0 && (x+i)<=(img1.Width()-1) && (y+j)<=(img1.Height()-1) && (y+j)>=0)
+				{
+					if((x+i+u)>=0 && (x+i+u)<=(img1.Width()-1) && (y+j+v)<=(img1.Height()-1) && (y+j+v)>=0)
+					{
+						//std::cout<<ex<<endl;
+						//cout<<count++<<"	"<<x+i<<","<<y+j<<endl;
+						ex=ex+conv_out_gx(x+i,y+j)*(img1(x+i,y+j)-img2(Floor(x+i+u),Floor(y+j+v)));
+						ey=ey+conv_out_gy(x+i,y+j)*(img1(x+i,y+j)-img2(Floor(x+i+u),Floor(y+j+v)));
+					}
+
+				}
+				else if((x+i)>(img1.Width()-1) || (y+j)>(img1.Height()-1))
+				{
+					if((x+i+u)>(img1.Width()-1) || (y+j+v)>(img1.Height()-1))
+					{
+						ex=ex;
+						ey=ey;
+					}
+				}
+			}
+		}
+		//std::cout<<ex;
+		float det=gxx*gyy-gxy*gxy;
+		float udel=(gyy*ex-gxy*ey)/det;
+		float vdel=(gxx*ey-gxy*ex)/det;
+		u=u + udel; 
+		v=v + udel;
+		//std::cout<<u<<endl;
+		//std::cout<<v<<endl;
+
+	}
+	U[0]=u;
+	U[1]=v;
+
+	return U;
+}
