@@ -14,7 +14,7 @@ port=8888
 rpisock=socket.socket(socket.AF_INET,scoket.SOCK_STREAM)
 
 try:
-	rpisock.bind((host,port))
+	rpisock.bind((host,port)) #input is a tuple
 except socket.error:
 	print("Failed to bind!")
 	sys.exit()
